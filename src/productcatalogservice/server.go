@@ -74,8 +74,20 @@ func init() {
 }
 
 func main() {
-	go initTracing()
-	go initProfiling("productcatalogservice", "1.0.0")
+	if os.Getenv("DISABLE_TRACING") == "" {
+		log.Info("Tracing enabled.")
+		go initTracing()
+	} else {
+		log.Info("Tracing disabled.")
+	}
+
+	if os.Getenv("DISABLE_PROFILER") == "" {
+		log.Info("Profiling enabled.")
+		go initProfiling("productcatalogservice", "1.0.0")
+	} else {
+		log.Info("Profiling disabled.")
+	}
+
 	flag.Parse()
 
 	// set injected latency
@@ -119,8 +131,17 @@ func run(port string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv := grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
+	var srv *grpc.Server
+	if os.Getenv("DISABLE_STATS") == "" {
+		log.Info("Stats enabled.")
+		srv = grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
+	} else {
+		log.Info("Stats disabled.")
+		srv = grpc.NewServer()
+	}
+
 	svc := &productCatalog{}
+
 	pb.RegisterProductCatalogServiceServer(srv, svc)
 	healthpb.RegisterHealthServer(srv, svc)
 	go srv.Serve(l)
@@ -158,32 +179,32 @@ func initStats(exporter *stackdriver.Exporter) {
 	}
 }
 
-func initStackDriverTracing() {
+func initStackdriverTracing() {
 	// TODO(ahmetb) this method is duplicated in other microservices using Go
 	// since they are not sharing packages.
 	for i := 1; i <= 3; i++ {
 		exporter, err := stackdriver.NewExporter(stackdriver.Options{})
 		if err != nil {
-			log.Warnf("failed to initialize stackdriver exporter: %+v", err)
+			log.Warnf("failed to initialize Stackdriver exporter: %+v", err)
 		} else {
 			trace.RegisterExporter(exporter)
 			trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
-			log.Info("registered stackdriver tracing")
+			log.Info("registered Stackdriver tracing")
 
 			// Register the views to collect server stats.
 			initStats(exporter)
 			return
 		}
 		d := time.Second * 10 * time.Duration(i)
-		log.Infof("sleeping %v to retry initializing stackdriver exporter", d)
+		log.Infof("sleeping %v to retry initializing Stackdriver exporter", d)
 		time.Sleep(d)
 	}
-	log.Warn("could not initialize stackdriver exporter after retrying, giving up")
+	log.Warn("could not initialize Stackdriver exporter after retrying, giving up")
 }
 
 func initTracing() {
 	initJaegerTracing()
-	initStackDriverTracing()
+	initStackdriverTracing()
 }
 
 func initProfiling(service, version string) {
@@ -198,14 +219,14 @@ func initProfiling(service, version string) {
 		}); err != nil {
 			log.Warnf("failed to start profiler: %+v", err)
 		} else {
-			log.Info("started stackdriver profiler")
+			log.Info("started Stackdriver profiler")
 			return
 		}
 		d := time.Second * 10 * time.Duration(i)
-		log.Infof("sleeping %v to retry initializing stackdriver profiler", d)
+		log.Infof("sleeping %v to retry initializing Stackdriver profiler", d)
 		time.Sleep(d)
 	}
-	log.Warn("could not initialize stackdriver profiler after retrying, giving up")
+	log.Warn("could not initialize Stackdriver profiler after retrying, giving up")
 }
 
 type productCatalog struct{}
@@ -238,6 +259,10 @@ func parseCatalog() []*pb.Product {
 
 func (p *productCatalog) Check(ctx context.Context, req *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
 	return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_SERVING}, nil
+}
+
+func (p *productCatalog) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Health_WatchServer) error {
+	return status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
 }
 
 func (p *productCatalog) ListProducts(context.Context, *pb.Empty) (*pb.ListProductsResponse, error) {
